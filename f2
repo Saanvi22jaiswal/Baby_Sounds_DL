@@ -1,0 +1,217 @@
+import os
+import numpy as np
+import pandas as pd
+import librosa
+import librosa.display
+import matplotlib.pyplot as plt
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Dropout, Flatten, Dense, BatchNormalization
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
+from tensorflow.keras.utils import to_categorical
+from tqdm import tqdm # For a nice progress bar
+
+# --- 1. Configuration (Set to our chosen dataset) ---
+print("TensorFlow Version:", tf.__version__)
+
+# This is the base path to the project folder you created in Drive
+DRIVE_PROJECT_PATH = '/content/drive/MyDrive/BacchaRoars_Project/'
+
+# We are using the 'baby cry pattern' dataset
+DATASET_PATH = os.path.join(DRIVE_PROJECT_PATH, 'baby cry pattern')
+print(f"Loading dataset from: {DATASET_PATH}")
+
+# --- NEW: Feature Extraction Constants ---
+# We must make all audio "images" the same size.
+# After analyzing a few files, 174 is a good length.
+# (librosa.feature.melspectrogram(y=y).shape[1] is ~174 for 4-sec audio)
+MAX_PAD_LEN = 174
+N_MELS = 128       # Number of Mel bands (height of image)
+
+# --- 2. Feature Extraction Function ---
+def extract_features(file_path):
+    """
+    Extracts a fixed-length Mel-spectrogram from an audio file.
+    Pads or truncates to MAX_PAD_LEN.
+    """
+    try:
+        # 1. Load audio file
+        audio, sample_rate = librosa.load(file_path, res_type='kaiser_fast', sr=22050)
+
+        # 2. Compute Mel-spectrogram
+        mel_spec = librosa.feature.melspectrogram(y=audio, sr=sample_rate, n_mels=N_MELS)
+
+        # 3. Convert to decibels (log-scale)
+        log_mel_spec = librosa.power_to_db(mel_spec, ref=np.max)
+
+        # 4. --- THIS IS THE CRITICAL NEW STEP ---
+        # Pad or truncate to a fixed length
+        if log_mel_spec.shape[1] > MAX_PAD_LEN:
+            # Truncate (cut) if it's too long
+            log_mel_spec = log_mel_spec[:, :MAX_PAD_LEN]
+        else:
+            # Pad with silence (0) if it's too short
+            pad_width = MAX_PAD_LEN - log_mel_spec.shape[1]
+            log_mel_spec = np.pad(log_mel_spec, pad_width=((0, 0), (0, pad_width)), mode='constant')
+
+        return log_mel_spec
+
+    except Exception as e:
+        print(f"Error processing {file_path}: {e}")
+        return None
+
+# --- 3. Load and Process ALL Data ---
+def load_data(dataset_path):
+    """Loads all audio files, extracts features, and creates labels."""
+    features = []
+    labels = []
+
+    print("Starting data loading and feature extraction...")
+    # Iterate through each folder (e.g., 'hungry', 'pain')
+    for label in os.listdir(dataset_path):
+        class_path = os.path.join(dataset_path, label)
+        if not os.path.isdir(class_path):
+            continue
+
+        print(f"... Processing class: {label}")
+        # Use tqdm for a progress bar
+        for filename in tqdm(os.listdir(class_path)):
+            if filename.endswith(('.wav', '.mp3', '.ogg')):
+                file_path = os.path.join(class_path, filename)
+
+                # Extract features
+                data = extract_features(file_path)
+
+                if data is not None:
+                    features.append(data)
+                    labels.append(label)
+
+    print("Feature extraction complete.")
+    return np.array(features), np.array(labels)
+
+# This will take a minute or two!
+X, y = load_data(DATASET_PATH)
+
+if X.shape[0] == 0:
+    print("\n--- ERROR: No data was loaded! ---")
+    print("Please check the DATASET_PATH and folder structure.")
+else:
+    print(f"\nSuccessfully loaded {X.shape[0]} files.")
+    print(f"Feature matrix shape: {X.shape}") # (num_files, n_mels, max_pad_len)
+    print(f"Labels array shape: {y.shape}")
+
+# --- 4. Data Preprocessing for CNN ---
+print("\nPreparing data for the model...")
+
+# 4.1 Encode labels (e.g., 'hungry' -> 4, 'pain' -> 7)
+le = LabelEncoder()
+y_encoded = le.fit_transform(y)
+num_classes = len(le.classes_)
+print(f"Found {num_classes} classes: {list(le.classes_)}")
+
+# 4.2 One-hot encode labels
+# This converts '4' into [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0]
+# which is what the 'categorical_crossentropy' loss function needs.
+y_onehot = to_categorical(y_encoded, num_classes=num_classes)
+
+# 4.3 Add channel dimension for CNN
+# Our images are (128, 174). A CNN expects (128, 174, 1) for grayscale.
+X = X[..., np.newaxis]
+print(f"Data shape after adding channel: {X.shape}")
+
+# 4.4 Split into training and testing sets (80% train, 20% test)
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y_onehot,
+    test_size=0.2,
+    random_state=42,
+    stratify=y_onehot # Ensures both train/test have a similar mix of classes
+)
+
+print(f"\nTraining data shape: {X_train.shape}")
+print(f"Testing data shape: {X_test.shape}")
+print(f"Training labels shape: {y_train.shape}")
+print(f"Testing labels shape: {y_test.shape}")
+
+
+# --- 5. Build the CNN Model ---
+print("\nBuilding the CNN model...")
+input_shape = (X_train.shape[1], X_train.shape[2], 1) # (128, 174, 1)
+
+model = Sequential([
+    # 1st Conv Layer
+    Conv2D(32, kernel_size=(3, 3), activation='relu', input_shape=input_shape),
+    MaxPooling2D(pool_size=(2, 2)),
+    BatchNormalization(), # Helps stabilize training
+
+    # 2nd Conv Layer
+    Conv2D(64, kernel_size=(3, 3), activation='relu'),
+    MaxPooling2D(pool_size=(2, 2)),
+    BatchNormalization(),
+    Dropout(0.25), # Regularization to prevent overfitting
+
+    # 3rd Conv Layer
+    Conv2D(128, kernel_size=(3, 3), activation='relu'),
+    MaxPooling2D(pool_size=(2, 2)),
+    BatchNormalization(),
+    Dropout(0.25),
+
+    # Flatten layer (converts 2D image data to 1D vector)
+    Flatten(),
+
+    # Fully Connected Layer
+    Dense(128, activation='relu'),
+    Dropout(0.5), # More dropout
+
+    # Output Layer
+    # 'softmax' gives probabilities for each class
+    Dense(num_classes, activation='softmax')
+])
+
+# --- 6. Compile the Model ---
+model.compile(
+    loss='categorical_crossentropy', # Best for multi-class classification
+    optimizer='adam',                # A good default optimizer
+    metrics=['accuracy']
+)
+model.summary()
+
+# --- 7. Train the Model ---
+print("\n--- Starting Model Training ---")
+print("This will take a few minutes...")
+
+BATCH_SIZE = 32
+EPOCHS = 50  # We can stop early if it stops improving
+
+# Callback to stop training if validation loss stops improving
+early_stopping = tf.keras.callbacks.EarlyStopping(
+    monitor='val_loss',
+    patience=5,         # Stop after 5 epochs of no improvement
+    restore_best_weights=True
+)
+
+history = model.fit(
+    X_train, y_train,
+    batch_size=BATCH_SIZE,
+    epochs=EPOCHS,
+    validation_data=(X_test, y_test),
+    callbacks=[early_stopping],
+    verbose=1
+)
+
+print("\n--- Training Complete ---")
+
+# --- 8. Evaluate the Model ---
+print("\nEvaluating model on test data...")
+test_loss, test_acc = model.evaluate(X_test, y_test, verbose=0)
+print(f"\nTest Accuracy: {test_acc * 100:.2f}%")
+print(f"Test Loss: {test_loss:.4f}")
+
+# --- 9. Plot Training History ---
+print("\nPlotting training history...")
+pd.DataFrame(history.history).plot(figsize=(12, 5))
+plt.grid(True)
+plt.gca().set_ylim(0, 1.5) # Set Y-axis limits
+plt.title("Model Training History")
+plt.xlabel("Epoch")
+plt.show()
