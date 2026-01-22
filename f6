@@ -1,0 +1,30 @@
+import os
+import pickle
+from tensorflow.keras.models import load_model
+
+# --- Configuration ---
+SAVE_PATH = '/content/drive/MyDrive/BacchaRoars_Project/saved_models/'
+MODEL_NAME = 'baccha_roars_cnn_v2.keras'
+ENCODER_NAME = 'label_encoder.pkl'
+
+print("Loading saved model and encoder...")
+
+# --- 1. Load the Model ---
+model_path = os.path.join(SAVE_PATH, MODEL_NAME)
+
+if os.path.exists(model_path):
+    loaded_model = load_model(model_path)
+    print("✅ Model loaded successfully!")
+else:
+    print(f"❌ Error: Model file not found at {model_path}")
+
+# --- 2. Load the Label Encoder ---
+encoder_path = os.path.join(SAVE_PATH, ENCODER_NAME)
+
+if os.path.exists(encoder_path):
+    with open(encoder_path, 'rb') as f:
+        loaded_le = pickle.load(f)
+    print("✅ Label Encoder loaded successfully!")
+    print(f"   Classes: {loaded_le.classes_}")
+else:
+    print(f"❌ Error: Encoder file not found at {encoder_path}")
