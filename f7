@@ -1,0 +1,33 @@
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+from sklearn.metrics import classification_report, confusion_matrix
+
+print("--- Evaluating Model v2 (Augmented) ---")
+
+# 1. Get Predictions
+# Use the model currently in memory (the one you just trained)
+y_pred_probs = model.predict(X_test)
+y_pred_labels = np.argmax(y_pred_probs, axis=1)
+y_true_labels = np.argmax(y_test, axis=1)
+
+# 2. Classification Report
+print("\n--- Classification Report ---")
+print(classification_report(y_true_labels, y_pred_labels, target_names=le.classes_))
+
+# 3. Confusion Matrix
+print("\n--- Confusion Matrix ---")
+cm = confusion_matrix(y_true_labels, y_pred_labels)
+
+plt.figure(figsize=(12, 10))
+sns.heatmap(cm,
+            annot=True,
+            fmt='d',
+            cmap='Blues',
+            xticklabels=le.classes_,
+            yticklabels=le.classes_)
+
+plt.title('Confusion Matrix (v2 - Augmented)', fontsize=16)
+plt.ylabel('True Label')
+plt.xlabel('Predicted Label')
+plt.show()
