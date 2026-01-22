@@ -1,0 +1,143 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
+from tensorflow.keras.utils import to_categorical
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Dropout, Flatten, Dense, BatchNormalization
+import tensorflow as tf
+
+# --- 1. Prepare the Augmented Data ---
+print("Preparing augmented data for training...")
+
+# A. Encode the labels (strings -> numbers)
+le = LabelEncoder()
+y_encoded = le.fit_transform(y_augmented)
+num_classes = len(le.classes_)
+print(f"Classes found: {le.classes_}")
+
+# B. One-hot encode the labels
+y_final = to_categorical(y_encoded, num_classes=num_classes)
+
+# C. Add Channel Dimension to X (required for CNN)
+# Current shape: (Num_Samples, 128, 174) -> New shape: (Num_Samples, 128, 174, 1)
+X_final = X_augmented[..., np.newaxis]
+
+# D. Split into Train and Test sets
+# We use a standard 80/20 split
+X_train, X_test, y_train, y_test = train_test_split(
+    X_final, y_final,
+    test_size=0.2,
+    random_state=42,
+    stratify=y_final # Important: keeps class balance in both sets
+)
+
+print(f"Training Shape: {X_train.shape}")
+print(f"Testing Shape: {X_test.shape}")
+
+# --- 2. Define the Fresh CNN Architecture ---
+# We use the same architecture as before, but starting fresh
+print("\nBuilding fresh model...")
+input_shape = (X_train.shape[1], X_train.shape[2], 1)
+
+model = Sequential([
+    # Layer 1
+    Conv2D(32, (3, 3), activation='relu', input_shape=input_shape),
+    MaxPooling2D((2, 2)),
+    BatchNormalization(),
+
+    # Layer 2
+    Conv2D(64, (3, 3), activation='relu'),
+    MaxPooling2D((2, 2)),
+    BatchNormalization(),
+    Dropout(0.3), # Increased dropout slightly for better generalization
+
+    # Layer 3
+    Conv2D(128, (3, 3), activation='relu'),
+    MaxPooling2D((2, 2)),
+    BatchNormalization(),
+    Dropout(0.3),
+
+    # Flatten & Dense
+    Flatten(),
+    Dense(128, activation='relu'),
+    Dropout(0.5),
+    Dense(num_classes, activation='softmax')
+])
+
+# --- 3. Compile & Train ---
+model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+
+print("\n--- Starting Re-Training ---")
+# Early stopping ensures we don't waste time if the model stops learning
+early_stopping = tf.keras.callbacks.EarlyStopping(
+    monitor='val_loss',
+    patience=6,
+    restore_best_weights=True
+)
+
+history = model.fit(
+    X_train, y_train,
+    epochs=50,
+    batch_size=32,
+    validation_data=(X_test, y_test),
+    callbacks=[early_stopping],
+    verbose=1
+)
+
+# --- 4. Visualize Results ---
+# Plot the new training history to see if it's more stable
+plt.figure(figsize=(12, 5))
+
+# Plot Accuracy
+plt.subplot(1, 2, 1)
+plt.plot(history.history['accuracy'], label='Train Accuracy')
+plt.plot(history.history['val_accuracy'], label='Validation Accuracy')
+plt.title('Model Accuracy (Augmented)')
+plt.xlabel('Epoch')
+plt.ylabel('Accuracy')
+plt.legend()
+
+# Plot Loss
+plt.subplot(1, 2, 2)
+plt.plot(history.history['loss'], label='Train Loss')
+plt.plot(history.history['val_loss'], label='Validation Loss')
+plt.title('Model Loss (Augmented)')
+plt.xlabel('Epoch')
+plt.ylabel('Loss')
+plt.legend()
+
+plt.show()
+
+
+
+import os
+import pickle
+from tensorflow.keras.models import save_model
+
+# --- Configuration ---
+# Define where to save in your Drive
+SAVE_PATH = '/content/drive/MyDrive/BacchaRoars_Project/saved_models/'
+
+# Create the folder if it doesn't exist
+if not os.path.exists(SAVE_PATH):
+    os.makedirs(SAVE_PATH)
+    print(f"Created folder: {SAVE_PATH}")
+
+# --- 1. Save the Keras Model ---
+# We use the modern .keras format (better than .h5)
+MODEL_NAME = 'baccha_roars_cnn_v2.keras'
+model_save_path = os.path.join(SAVE_PATH, MODEL_NAME)
+
+model.save(model_save_path)
+print(f"✅ Model saved to: {model_save_path}")
+
+# --- 2. Save the Label Encoder ---
+# We must save this so we know what the predictions mean later!
+ENCODER_NAME = 'label_encoder.pkl'
+encoder_save_path = os.path.join(SAVE_PATH, ENCODER_NAME)
+
+with open(encoder_save_path, 'wb') as f:
+    pickle.dump(le, f)
+
+print(f"✅ Label Encoder saved to: {encoder_save_path}")
