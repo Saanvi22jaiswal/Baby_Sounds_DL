@@ -1,0 +1,186 @@
+import os
+import pandas as pd
+# 'librosa' is the key library for audio analysis in Python.
+# We use it to:
+# - Load audio files (librosa.load)
+# - Get audio properties like duration (librosa.get_duration)
+# - Create visual representations (librosa.display)
+# - Extract audio features like Mel-spectrograms (librosa.feature)
+import librosa
+import librosa.display
+import matplotlib.pyplot as plt
+import numpy as np
+from google.colab import drive
+
+# --- 1. Configuration ---
+DRIVE_PROJECT_PATH = '/content/drive/MyDrive/BacchaRoars_Project/'
+
+# We use os.path.join to safely combine paths. It automatically adds the '/'
+# between 'DRIVE_PROJECT_PATH' and 'baby cry pattern'.
+PATH_DATASET_1 = os.path.join(DRIVE_PROJECT_PATH, 'baby cry pattern')
+PATH_DATASET_2 = os.path.join(DRIVE_PROJECT_PATH, 'Baby cry sense')
+
+# These are "human-readable" names for printing in our logs.
+DATASET_1_NAME = "baby cry pattern"
+DATASET_2_NAME = "Baby cry sense"
+
+# A path to one specific audio file. This is used to test our
+# visualization function and see what our data looks and sounds like.
+SAMPLE_FILE_PATH = os.path.join(PATH_DATASET_1, 'hungry', '0a983cd2-0078-4698-a048-99ac01eb167a-1433917038889-1.7-f-04-hu.wav')
+
+# --- 2. Analysis Function ---
+def analyze_dataset_counts(dataset_path, dataset_name):
+    """
+    Counts the number of audio files in each subdirectory (class) of a given path.
+
+    This is crucial for checking "class imbalance" - i.e., do we have
+    way more 'hungry' cries than 'pain' cries? This can affect model performance.
+
+    """
+    print(f"\n--- Analyzing: {dataset_name} ---")
+
+
+    # Initialize an empty dictionary to store our counts.
+    # e.g., {'hungry': 100, 'pain': 80, 'diaper': 90}
+    class_counts = {}
+
+    # os.listdir(dataset_path) gets a list of all items in the directory.
+    # e.g., ['hungry', 'pain', 'diaper', 'README.txt']
+    # sorted() just makes sure we process them in alphabetical order.
+    for class_name in sorted(os.listdir(dataset_path)):
+        # Create the full path to this item
+        # e.g., '/content/drive/.../baby cry pattern/hungry'
+        class_path = os.path.join(dataset_path, class_name)
+
+        # We only care about directories (folders), not stray files.
+        if os.path.isdir(class_path):
+            try:
+                # This is a "list comprehension" - a compact way to build a list.
+                # 1. os.listdir(class_path) lists all files *inside* the class folder.
+                # 2. for f in ...: It loops through each file 'f'.
+                # 3. if f.endswith(...): It *only* keeps files ending in .wav, .mp3, or .ogg.
+                # 4. len([...]): Finally, it counts how many files were kept.
+                num_files = len([f for f in os.listdir(class_path) if f.endswith(('.wav', '.mp3', '.ogg'))])
+
+                # Store this count in our dictionary
+                class_counts[class_name] = num_files
+            except Exception as e:
+                # A try/except block catches errors (e.g., "Permission Denied")
+                print(f"Could not read files in {class_path}: {e}")
+
+    # If the dictionary is still empty (no subfolders were found)
+    if not class_counts:
+        print(f"No valid subdirectories or audio files found in {dataset_path}")
+        return None
+
+    # --- Convert to Pandas DataFrame for nice printing ---
+    # list(class_counts.items()) turns {'hungry': 100} into [('hungry', 100)]
+    df_counts = pd.DataFrame(list(class_counts.items()), columns=['Cry_Reason', 'File_Count'])
+
+    # Sort the table to show the class with the most files at the top.
+    df_counts = df_counts.sort_values(by='File_Count', ascending=False)
+
+    # Print the resulting table
+    print(df_counts)
+    # df_counts['File_Count'].sum() adds up all values in the 'File_Count' column
+    print(f"Total Files Found: {df_counts['File_Count'].sum()}")
+    return df_counts
+
+# --- 3. Visualization Function ---
+def visualize_sample(file_path):
+    """
+    Loads a single audio file and displays its waveform and
+    Mel-spectrogram. This shows us what our model will "see".
+    """
+    print(f"\n--- Visualizing Sample File ---")
+
+    # Loading audio can fail (e.g., corrupt file), so we use try/except.
+    try:
+        # Load the audio file.
+        # 'y' is the audio time series (a numpy array of amplitudes).
+        # 'sr' is the sample rate (e.g., 44100 Hz).
+        # 'sr=None' tells librosa to use the file's *original* sample rate.
+        y, sr = librosa.load(file_path, sr=None)
+
+        print(f"File: {file_path}")
+        print(f"Sample Rate (sr): {sr} Hz")
+        print(f"Duration: {librosa.get_duration(y=y, sr=sr):.2f} seconds")
+        print(f"Audio shape: {y.shape}") # (num_samples,)
+
+        # Create a figure to hold our plots, with a specific size.
+        plt.figure(figsize=(12, 8))
+
+        # --- Plot 1: Waveform ---
+        # Create a 2-row, 1-column grid and select the 1st plot area.
+        plt.subplot(2, 1, 1)
+        # librosa.display.waveshow plots the amplitude ('y') over time.
+        librosa.display.waveshow(y, sr=sr)
+        plt.title('Audio Waveform')
+        plt.xlabel('Time (s)')
+        plt.ylabel('Amplitude')
+
+        # --- Plot 2: Mel-Spectrogram ---
+        # This is the most common "image" of sound used for audio ML.
+
+        # 1. Create the Mel-spectrogram. This converts the audio
+        #    from the time domain (amplitude) to the frequency domain.
+        #    n_mels=128 means we'll have 128 frequency bins.
+        S = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128)
+
+        # 2. Convert the spectrogram from "power" to "decibels (dB)".
+        #    This is a logarithmic scale that matches human hearing better.
+        S_dB = librosa.power_to_db(S, ref=np.max)
+
+        # Select the 2nd plot area.
+        plt.subplot(2, 1, 2)
+        # librosa.display.specshow displays the spectrogram as an image.
+        librosa.display.specshow(S_dB, sr=sr, x_axis='time', y_axis='mel')
+
+        # Add a color bar to show what the colors mean (in dB).
+        plt.colorbar(format='%+2.0f dB')
+        plt.title('Mel-Spectrogram')
+        plt.xlabel('Time (s)')
+        plt.ylabel('Mel Frequency')
+
+        # Adjusts plot spacing to prevent titles/labels from overlapping.
+        plt.tight_layout()
+        # Show the plots on the screen.
+        plt.show()
+
+    except Exception as e:
+        # If the 'try' block failed, print a helpful error message.
+        print(f"\n--- ERROR ---")
+        print(f"Could not load or process the sample file at: '{file_path}'")
+        print("Please make sure 'SAMPLE_FILE_PATH' is set to a valid .wav file.")
+        print(f"Details: {e}")
+
+# --- 4. Main Execution ---
+# This is a standard Python convention.
+# The code inside this 'if' block will only run when you execute
+# this file directly (e.g., `python this_script.py`).
+# It will *not* run if this file is imported by another script.
+if __name__ == "__main__":
+    print("====== Step 1: Data Exploration ======\n")
+
+    # First, check if the main project path is even accessible.
+    if os.path.exists(DRIVE_PROJECT_PATH):
+
+        # If it exists, analyze both datasets.
+        analyze_dataset_counts(PATH_DATASET_1, DATASET_1_NAME)
+        analyze_dataset_counts(PATH_DATASET_2, DATASET_2_NAME)
+
+        # Next, check if the *specific* sample file exists before trying to load it.
+        if os.path.exists(SAMPLE_FILE_PATH):
+            # If it exists, run the visualization function.
+            visualize_sample(SAMPLE_FILE_PATH)
+        else:
+            # If not, print a helpful "skip" message.
+            print(f"\n--- SKIPPING VISUALIZATION ---")
+            print(f"Sample file not found at: {SAMPLE_FILE_PATH}")
+            print("Please check the 'SAMPLE_FILE_PATH' variable and make sure the file name is correct.")
+
+    else:
+        # This is the error if the *main project folder* isn't found.
+        # This is the most common error, usually because Drive isn't mounted.
+        print(f"ERROR: Project path not found at: {DRIVE_PROJECT_PATH}")
+        print("Please check: \n1. Is your Drive mounted? (Run `drive.mount('/content/drive')`) \n2. Did you use the exact folder name 'BacchaRoars_Project'?")
