@@ -1,0 +1,104 @@
+import numpy as np
+import librosa
+import os
+from tqdm import tqdm
+
+# --- 1. Augmentation Functions ---
+def add_noise(data):
+    """Adds random white noise to the audio"""
+    noise_amp = 0.005 * np.random.uniform() * np.amax(data)
+    data = data + noise_amp * np.random.normal(size=data.shape)
+    return data
+
+def shift_pitch(data, sr):
+    """Shifts the pitch up or down slightly"""
+    return librosa.effects.pitch_shift(y=data, sr=sr, n_steps=2.0) # Shift up by 2 semitones
+
+def time_stretch(data):
+    """Speeds up or slows down the audio"""
+    return librosa.effects.time_stretch(y=data, rate=1.2) # Speed up by 20%
+
+# --- 2. Updated Feature Extraction ---
+# We use the same settings as before
+MAX_PAD_LEN = 174
+N_MELS = 128
+
+def get_mel_spectrogram(audio, sample_rate):
+    """Helper to convert audio array to Mel-Spectrogram"""
+    mel_spec = librosa.feature.melspectrogram(y=audio, sr=sample_rate, n_mels=N_MELS)
+    log_mel_spec = librosa.feature.melspectrogram(y=audio, sr=sample_rate, n_mels=N_MELS)
+    log_mel_spec = librosa.power_to_db(mel_spec, ref=np.max)
+
+    # Pad or truncate
+    if log_mel_spec.shape[1] > MAX_PAD_LEN:
+        log_mel_spec = log_mel_spec[:, :MAX_PAD_LEN]
+    else:
+        pad_width = MAX_PAD_LEN - log_mel_spec.shape[1]
+        log_mel_spec = np.pad(log_mel_spec, pad_width=((0, 0), (0, pad_width)), mode='constant')
+
+    return log_mel_spec
+
+def load_data_augmented(dataset_path):
+    features = []
+    labels = []
+
+    print("Starting Augmented Data Loading...")
+
+    for label in os.listdir(dataset_path):
+        class_path = os.path.join(dataset_path, label)
+        if not os.path.isdir(class_path):
+            continue
+
+        print(f"... Processing class: {label}")
+
+        # Check if this is a 'strong' class that doesn't need much help
+        # 'hungry' was our dominant class. 'laugh' and 'silence' were also very accurate.
+        is_strong_class = label in ['hungry', 'laugh', 'silence']
+
+        for filename in tqdm(os.listdir(class_path)):
+            if filename.endswith(('.wav', '.mp3', '.ogg')):
+                file_path = os.path.join(class_path, filename)
+
+                try:
+                    # Load original file
+                    # sr=22050 is standard for Mel Spectrograms
+                    data, sr = librosa.load(file_path, res_type='kaiser_fast', sr=22050)
+
+                    # 1. Always add the original file
+                    feat = get_mel_spectrogram(data, sr)
+                    features.append(feat)
+                    labels.append(label)
+
+                    # 2. If it's a WEAK class, add AUGMENTED versions
+                    if not is_strong_class:
+
+                        # Variation A: Noise
+                        noise_data = add_noise(data)
+                        feat_noise = get_mel_spectrogram(noise_data, sr)
+                        features.append(feat_noise)
+                        labels.append(label)
+
+                        # Variation B: Pitch Shift
+                        pitch_data = shift_pitch(data, sr)
+                        feat_pitch = get_mel_spectrogram(pitch_data, sr)
+                        features.append(feat_pitch)
+                        labels.append(label)
+
+                        # Variation C: Time Stretch (Optional - keeping it simple for now)
+                        # stretch_data = time_stretch(data)
+                        # feat_stretch = get_mel_spectrogram(stretch_data, sr)
+                        # features.append(feat_stretch)
+                        # labels.append(label)
+
+                except Exception as e:
+                    print(f"Error on {filename}: {e}")
+
+    return np.array(features), np.array(labels)
+
+# --- 3. Execute Loading ---
+# This replaces the old X, y variables with new augmented ones
+X_augmented, y_augmented = load_data_augmented(DATASET_PATH)
+
+print(f"\nOriginal Data Count (approx): {X.shape[0]}")
+print(f"New Augmented Data Count: {X_augmented.shape[0]}")
+print("Notice how the number of samples has increased significantly!")
